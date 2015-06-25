@@ -4,7 +4,6 @@ import Alt from '../'
 import { Column, Table } from 'fixed-data-table'
 import makeFinalStore from './makeFinalStore'
 import connectToStores from './connectToStores'
-import DispatcherRecorder from './DispatcherRecorder'
 import { DragSource, DragDropContext } from 'react-dnd'
 import HTML5Backend from 'react-dnd/modules/backends/HTML5'
 
@@ -23,8 +22,10 @@ const actions = alt.generateActions(
   'saveRecording',
   'selectDispatch',
   'setAlt',
-  'toggleRecording',
-  'toggleRecordDispatch'
+  'startReplay',
+  'stopReplay',
+  'togglePauseReplay',
+  'toggleRecording'
 )
 
 const DispatcherStore = alt.createStore(class {
@@ -33,7 +34,9 @@ const DispatcherStore = alt.createStore(class {
       return {
         currentStateId: state.currentStateId,
         dispatches: state.dispatches,
+        inReplayMode: state.nextReplayId !== null,
         isRecording: state.isRecording,
+        isReplaying: state.isReplaying,
         mtime: state.mtime,
         selectedDispatch: state.selectedDispatch,
       }
@@ -41,16 +44,17 @@ const DispatcherStore = alt.createStore(class {
   }
 
   constructor() {
+    this.cachedDispatches = []
     this.dispatches = []
     this.selectedDispatch = {}
     this.currentStateId = null
     this.snapshots = {}
     this.alt = null
-    this.recorder = null
     this.stores = []
-    this.replayTime = 0
+    this.replayTime = 100
     this.isRecording = true
     this.isReplaying = false
+    this.nextReplayId = null
 
     // due to the aggressive nature of FixedDataTable's shouldComponentUpdate
     // and JS objects being references not values we need an mtime applied
@@ -84,36 +88,40 @@ const DispatcherStore = alt.createStore(class {
     this.dispatches = []
     this.selectedDispatch = {}
     this.currentStateId = null
+    this.nextReplayId = null
     this.snapshots = {}
-    this.recorder.clear()
+    this.alt.recycle()
   }
 
   loadRecording(events) {
     this.clear()
     const wasRecording = this.isRecording
     this.isRecording = true
-    const dispatches = this.recorder.loadEvents(events)
-    dispatches.forEach((dispatch) => this.addDispatch(dispatch))
+    const dispatches = JSON.parse(events)
+    dispatches.reverse().forEach((dispatch) => {
+      setTimeout(() => {
+        this.alt.dispatch(dispatch.action, dispatch.data, dispatch.details)
+      }, 0)
+    })
     this.isRecording = wasRecording
   }
 
   replay() {
-    this.clear()
+    if (!this.isReplaying) return false
 
-    // XXX I think I should make a new store that handles all the replaying stuff
-    // have a Pause replays | Stop replays.
-    // and a way to configure replays
-    // if replays are taking place you may want to stub the dispatcher so you can trap any dispatches
-    // that aren't part of the replay
-    // and then you may want to unleash them afterwards? (console.warn that some dispatches were trapped)
-    this.isReplaying = true
-
+    const dispatch = this.cachedDispatches[this.nextReplayId]
     setTimeout(() => {
+      this.alt.dispatch(dispatch.action, dispatch.data, dispatch.details)
+    }, 0)
 
-    }, this.replayTime)
+    this.nextReplayId = this.nextReplayId - 1
 
-    // XXX I need to be able to pause and stop replay and shit...
-    setTimeout(() => this.recorder.replay(5))
+    if (this.nextReplayId >= 0) {
+      setTimeout(() => actions.replay(), this.replayTime)
+    } else {
+      this.isReplaying = false
+      this.nextReplayId = null
+    }
   }
 
   revert(id) {
@@ -125,7 +133,7 @@ const DispatcherStore = alt.createStore(class {
   }
 
   saveRecording() {
-    console.log(this.recorder.serializeEvents())
+    console.log(JSON.stringify(this.dispatches))
   }
 
   selectDispatch(dispatch) {
@@ -134,57 +142,30 @@ const DispatcherStore = alt.createStore(class {
 
   setAlt(alt) {
     this.alt = alt
-    this.recorder = new DispatcherRecorder(alt)
-    this.recorder.record()
     this.stores = Object.keys(this.alt.stores).map((name) => {
       return this.alt.stores[name]
     })
   }
 
-  toggleRecording() {
-    if (this.isRecording) {
-      this.recorder.stop()
-    } else {
-      this.recorder.record()
-    }
-
-    this.isRecording = !this.isRecording
+  startReplay() {
+    this.cachedDispatches = this.dispatches.slice()
+    this.clear()
+    this.nextReplayId = this.cachedDispatches.length - 1
+    this.isReplaying = true
   }
 
-  toggleRecordDispatch(id) {
-    const dispatchId = this.dispatches.reduce((x, dispatch, i) => {
-      return dispatch.id === id ? i : x
-    }, null)
+  stopReplay() {
+    this.cachedDispatches = []
+    this.nextReplayId = null
+    this.isReplaying = false
+  }
 
-    if (dispatchId === null) return false
+  togglePauseReplay() {
+    this.isReplaying = !this.isReplaying
+  }
 
-    const dispatch = this.dispatches[dispatchId]
-
-    if (dispatch.recorded) {
-      // remove from the recorder
-      const spliceId = this.recorder.events.reduce((splice, event, i) => {
-        return event.id === id ? i : splice
-      }, null)
-
-      if (spliceId) this.recorder.events.splice(spliceId, 1)
-    } else {
-      // find the correct splice index so we can add it in proper replay order
-      let prevId = null
-      for (let i = dispatchId; i < this.dispatches.length; i += 1) {
-        if (this.dispatches[i].recorded) {
-          prevId = this.dispatches[i].id
-          break
-        }
-      }
-
-      const spliceId = this.recorder.events.reduce((splice, event, i) => {
-        return event.id === prevId ? i : splice
-      }, 0)
-
-      this.recorder.events.splice(spliceId, 0, dispatch)
-    }
-
-    dispatch.recorded = !dispatch.recorded
+  toggleRecording() {
+    this.isRecording = !this.isRecording
   }
 }, 'DispatcherStore')
 
@@ -217,6 +198,7 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
     super()
 
     this.getDispatch = this.getDispatch.bind(this)
+    this.renderReplay = this.renderReplay.bind(this)
     this.renderRevert = this.renderRevert.bind(this)
     this.view = this.view.bind(this)
   }
@@ -254,8 +236,21 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
     actions.saveRecording()
   }
 
+  startReplay() {
+    actions.startReplay()
+    actions.replay()
+  }
+
+  stopReplay() {
+    actions.stopReplay()
+  }
+
   toggleLogDispatches() {
     actions.toggleLogDispatches()
+  }
+
+  togglePauseReplay() {
+    actions.togglePauseReplay()
   }
 
   toggleRecording() {
@@ -286,6 +281,28 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
     )
   }
 
+  renderReplay() {
+    if (this.props.inReplayMode) {
+      return (
+        <span>
+          <span onClick={this.togglePauseReplay}>
+            {this.props.isReplaying ? 'Pause Replay' : 'Resume Replay'}
+          </span>
+          {' | '}
+          <span onClick={this.stopReplay}>
+            Stop Replay
+          </span>
+        </span>
+      )
+    }
+
+    return (
+      <span onClick={this.startReplay}>
+        Start Replay
+      </span>
+    )
+  }
+
   renderRevert(a, b, dispatch) {
     return (
       <span
@@ -306,24 +323,22 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
       <div>
         <div>
           <span onClick={this.toggleRecording}>
-            {this.props.isRecording ? 'Stop' : 'Record'}
-          </span>
-          {' | '}
-          <span onClick={this.saveRecording}>
-            {this.props.dispatches.length ? 'Save' : ''}
+            {this.props.isRecording ? 'Stop Recording' : 'Record'}
           </span>
           {' | '}
           <span onClick={this.clear}>
             Clear
           </span>
           {' | '}
+          <span onClick={this.saveRecording}>
+            {this.props.dispatches.length ? 'Save' : ''}
+          </span>
+          {' | '}
           <span onClick={this.loadRecording}>
             Load
           </span>
           {' | '}
-          <span onClick={this.replay}>
-            Replay Events
-          </span>
+          {this.renderReplay()}
         </div>
         <Table
           headerHeight={30}
