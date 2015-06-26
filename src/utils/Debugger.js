@@ -198,6 +198,7 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
     super()
 
     this.getDispatch = this.getDispatch.bind(this)
+    this.renderName = this.renderName.bind(this)
     this.renderReplay = this.renderReplay.bind(this)
     this.renderRevert = this.renderRevert.bind(this)
     this.view = this.view.bind(this)
@@ -226,9 +227,7 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
   }
 
   revert(ev) {
-    console.log('click')
     const data = ev.target.dataset
-    console.log(ev.target, data)
     actions.revert(data.dispatchId)
   }
 
@@ -258,10 +257,8 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
   }
 
   view(ev) {
-    console.log('clickety')
     const data = ev.target.dataset
-    console.log(ev.target, data)
-    const dispatch = this.props.dispatches[data.dispatchId]
+    const dispatch = this.props.dispatches[data.index]
     if (this.props.inspector) {
       actions.selectDispatch(dispatch)
     } else {
@@ -269,15 +266,15 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
     }
   }
 
-  renderName(name, _, dispatch) {
+  renderName(name, _, dispatch, idx) {
     return (
-      <span
-        data-dispatch-id={dispatch.id}
+      <div
+        data-index={idx}
         onClick={this.view}
         style={{ cursor: 'pointer' }}
       >
         {name}
-      </span>
+      </div>
     )
   }
 
@@ -305,16 +302,18 @@ const DispatcherDebugger = DragSource('DispatcherDebugger', {
 
   renderRevert(a, b, dispatch) {
     return (
-      <span
-        data-dispatch={dispatch.id}
-        onClick={this.revert}
-        style={{ cursor: 'pointer' }}
-      >
-        Revert
+      <div>
+        <span
+          data-dispatch-id={dispatch.id}
+          onClick={this.revert}
+          style={{ cursor: 'pointer' }}
+        >
+          Revert
+        </span>
         <span dangerouslySetInnerHTML={{
           __html: this.props.currentStateId === dispatch.id ? '&#10003;' : ''
         }} />
-      </span>
+      </div>
     )
   }
 
