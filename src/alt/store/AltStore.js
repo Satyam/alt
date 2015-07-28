@@ -42,20 +42,32 @@ class AltStore {
     this.dispatchToken = alt.dispatcher.register((payload) => {
       this.preventDefault = false
 
+      const pendingId = `${payload.action.toString()}:${model.getInstance().displayName}`
+
+      if (alt._isPending(pendingId)) return
+
       this.lifecycle('beforeEach', {
         payload,
         state: this.state
       })
 
+      const endPending = () => {
+        alt._endPending(pendingId)
+        this.emitChange()
+      }
       const actionHandler = model.actionListeners[payload.action] ||
         model.otherwise
 
       if (actionHandler) {
         const result = handleDispatch(() => {
-          return actionHandler.call(model, payload.data, payload.action)
+          return actionHandler.call(model, payload.data, payload.action, endPending)
         }, payload)
-
-        if (result !== false && !this.preventDefault) this.emitChange()
+        if (Promise && result instanceof Promise) {
+          alt._startPending(pendingId)
+          result.then(endPending, endPending)
+        } else if (actionHandler.length === 3) {
+          alt._startPending(pendingId)
+        } else if (result !== false && !this.preventDefault) this.emitChange()
       }
 
       if (model.reduce) {

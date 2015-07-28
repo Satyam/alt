@@ -1,4 +1,4 @@
-/*global window*/
+/*global window document*/
 import { Dispatcher } from 'flux'
 
 import * as StateFunctions from './utils/StateFunctions'
@@ -21,6 +21,45 @@ class Alt {
     this._actionsRegistry = {}
     this._initSnapshot = {}
     this._lastSnapshot = {}
+
+    this._pendingActions = []
+    this._whenStable = null
+  }
+  isoBootstrap() {
+    if (typeof document !== 'undefined') {
+      const snapshotEl = document.getElementById && document.getElementById('__alt_snapshot__')
+      if (snapshotEl) {
+        this.bootstrap(snapshotEl.innerHTML)
+        snapshotEl.parentNode.removeChild(snapshotEl)
+      }
+    }
+  }
+  _startPending(id) {
+    this._pendingActions.push(id)
+  }
+  _endPending(id) {
+    const pendings = this._pendingActions
+    const index = pendings.indexOf(id)
+    if (index > -1) {
+      pendings.splice(index, 1)
+      if (pendings.length === 0) {
+        if (this._whenStable) {
+          this._whenStable(`<script id="__alt_snapshot__" type="application/json">${this.takeSnapshot()}</script>`)
+        }
+      }
+    }
+  }
+
+  _isPending(id) {
+    return this._pendingActions.indexOf(id) !== -1
+  }
+
+  whenStable(cb) {
+    if (this._pendingActions.length === 0) {
+      cb()
+    } else {
+      this._whenStable = cb
+    }
   }
 
   dispatch(action, data, details) {
